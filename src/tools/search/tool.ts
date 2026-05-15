@@ -16,6 +16,8 @@ import { createSearchAPI, createSourceProcessor } from './search';
 import { createSerperScraper } from './serper-scraper';
 import { createTavilyScraper } from './tavily-scraper';
 import { createFirecrawlScraper } from './firecrawl';
+import { createParallelScraper } from './parallel-scraper';
+import { type ParallelSessionRef } from './parallel-search';
 import { expandHighlights } from './highlights';
 import { formatResultsForLLM } from './format';
 import { createDefaultLogger } from './utils';
@@ -179,13 +181,13 @@ async function executeParallelSearches({
 function createSearchProcessor({
   searchAPI,
   safeSearch,
-  supportsVideos,
+  supportsVerticalSearch,
   sourceProcessor,
   onGetHighlights,
   logger,
 }: {
   safeSearch: t.SearchToolConfig['safeSearch'];
-  supportsVideos: boolean;
+  supportsVerticalSearch: boolean;
   searchAPI: ReturnType<typeof createSearchAPI>;
   sourceProcessor: ReturnType<typeof createSourceProcessor>;
   onGetHighlights: t.SearchToolConfig['onGetHighlights'];
@@ -220,9 +222,9 @@ function createSearchProcessor({
         date,
         country,
         safeSearch,
-        images,
-        videos: supportsVideos && videos,
-        news,
+        images: supportsVerticalSearch && images,
+        videos: supportsVerticalSearch && videos,
+        news: supportsVerticalSearch && news,
         logger,
       });
 
@@ -338,6 +340,10 @@ export const createSearchTool = (
     tavilySearchUrl,
     tavilyExtractUrl,
     tavilySearchOptions,
+    parallelApiKey,
+    parallelSearchUrl,
+    parallelExtractUrl,
+    parallelSearchOptions,
     rerankerType = 'cohere',
     topResults = 5,
     strategies = ['no_extraction'],
@@ -350,6 +356,7 @@ export const createSearchTool = (
     firecrawlOptions,
     serperScraperOptions,
     tavilyScraperOptions,
+    parallelScraperOptions,
     scraperTimeout,
     jinaApiKey,
     jinaApiUrl,
@@ -359,6 +366,7 @@ export const createSearchTool = (
   } = config;
 
   const logger = config.logger || createDefaultLogger();
+  const parallelSessionRef: ParallelSessionRef = {};
   const effectiveTavilySearchOptions =
     searchProvider === 'tavily' && config.safeSearch != null
       ? {
@@ -393,6 +401,10 @@ export const createSearchTool = (
     tavilyApiKey,
     tavilySearchUrl,
     tavilySearchOptions: effectiveTavilySearchOptions,
+    parallelApiKey,
+    parallelSearchUrl,
+    parallelSearchOptions,
+    parallelSessionRef,
   });
 
   /** Create scraper based on scraperProvider */
@@ -416,6 +428,26 @@ export const createSearchTool = (
       timeout: scraperTimeout ?? tavilyScraperOptions?.timeout,
       logger,
     });
+  } else if (scraperProvider === 'parallel') {
+    scraperInstance = createParallelScraper(
+      {
+        ...parallelScraperOptions,
+        apiKey:
+          parallelScraperOptions?.apiKey ??
+          parallelApiKey ??
+          process.env.PARALLEL_API_KEY,
+        apiUrl: parallelScraperOptions?.apiUrl ?? parallelExtractUrl,
+        timeout: scraperTimeout ?? parallelScraperOptions?.timeout,
+        logger,
+        objective: parallelScraperOptions?.objective,
+        searchQueries: parallelScraperOptions?.searchQueries,
+        maxCharsTotal: parallelScraperOptions?.maxCharsTotal,
+        clientModel: parallelScraperOptions?.clientModel,
+        sessionId: parallelScraperOptions?.sessionId,
+        fullContent: parallelScraperOptions?.fullContent,
+      },
+      parallelSessionRef
+    );
   } else {
     scraperInstance = createFirecrawlScraper({
       ...firecrawlOptions,
@@ -454,7 +486,8 @@ export const createSearchTool = (
   const search = createSearchProcessor({
     searchAPI,
     safeSearch,
-    supportsVideos: searchProvider !== 'tavily',
+    supportsVerticalSearch:
+      searchProvider === 'serper' || searchProvider === 'searxng',
     sourceProcessor,
     onGetHighlights,
     logger,
