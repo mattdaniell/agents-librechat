@@ -11,6 +11,7 @@ import { createTavilyAPI } from './tavily-search';
 import { createSearchMetrics } from './metrics';
 import { getDefaultRanking } from './rerankers';
 import { createCrwAPI } from './crw-search';
+import { createParallelAPI } from './parallel-search';
 
 /** Engines queried when `searxngSearchOptions.engines` is not configured. */
 const DEFAULT_SEARXNG_ENGINES = 'google,bing,duckduckgo';
@@ -559,6 +560,10 @@ export const createSearchAPI = (
     crwApiKey,
     crwApiUrl,
     crwSearchOptions,
+    parallelApiKey,
+    parallelSearchUrl,
+    parallelSearchOptions,
+    parallelSessionRef,
     httpAgent,
     httpsAgent,
   } = config;
@@ -591,9 +596,20 @@ export const createSearchAPI = (
       httpAgent: httpAgent ?? crwSearchOptions?.httpAgent,
       httpsAgent: httpsAgent ?? crwSearchOptions?.httpsAgent,
     });
+  } else if (searchProvider.toLowerCase() === 'parallel') {
+    return createParallelAPI(
+      parallelApiKey,
+      parallelSearchUrl,
+      {
+        ...parallelSearchOptions,
+        httpAgent: httpAgent ?? parallelSearchOptions?.httpAgent,
+        httpsAgent: httpsAgent ?? parallelSearchOptions?.httpsAgent,
+      },
+      parallelSessionRef
+    );
   } else {
     throw new Error(
-      `Invalid search provider: ${searchProvider}. Must be 'serper', 'searxng', 'tavily', 'keenable', or 'crw'`
+      `Invalid search provider: ${searchProvider}. Must be 'serper', 'searxng', 'tavily', 'keenable', 'crw', or 'parallel'`
     );
   }
 };
@@ -726,6 +742,8 @@ export const createSourceProcessor = (
       onGetHighlights: t.SearchToolConfig['onGetHighlights'];
     }): Promise<Array<t.ScrapeResult>> => {
       let responses: Array<[string, t.AnyScraperResponse]>;
+      /** Parallel Extract ranks excerpts against these; other scrapers ignore them. */
+      const scrapeOptions = { objective: query, searchQueries: [query] };
 
       /** Scoped to acquisition alone. A batch `scrapeUrls` that rejects
        * yields no per-link responses, so nothing downstream will ever report
@@ -734,12 +752,12 @@ export const createSourceProcessor = (
        * scraped anything. */
       try {
         if (scraper.scrapeUrls) {
-          responses = await scraper.scrapeUrls(links);
+          responses = await scraper.scrapeUrls(links, scrapeOptions);
         } else {
           responses = await Promise.all(
             links.map((link) =>
               scraper
-                .scrapeUrl(link, {})
+                .scrapeUrl(link, scrapeOptions)
                 .catch((error): [string, t.AnyScraperResponse] => [
                   link,
                   { success: false, error: String(error) },

@@ -25,13 +25,15 @@ export type SearchProvider =
   | 'searxng'
   | 'tavily'
   | 'keenable'
-  | 'crw';
+  | 'crw'
+  | 'parallel';
 export type ScraperProvider =
   | 'firecrawl'
   | 'serper'
   | 'tavily'
   | 'crw'
-  | 'keenable';
+  | 'keenable'
+  | 'parallel';
 export type RerankerType = 'infinity' | 'jina' | 'cohere' | 'rag-api' | 'none';
 
 export interface Highlight {
@@ -112,6 +114,18 @@ export interface TavilySearchOptions extends HttpAgentConfig {
   includeFavicon?: boolean;
   chunksPerSource?: number;
   safeSearch?: boolean;
+  timeout?: number;
+}
+
+export interface ParallelSearchOptions extends HttpAgentConfig {
+  mode?: 'basic' | 'advanced';
+  maxResults?: number;
+  maxCharsPerResult?: number;
+  maxCharsTotal?: number;
+  includeDomains?: string[];
+  excludeDomains?: string[];
+  clientModel?: string;
+  sessionId?: string;
   timeout?: number;
 }
 
@@ -212,6 +226,11 @@ export interface SearchConfig extends HttpAgentConfig {
   crwApiKey?: string;
   crwApiUrl?: string;
   crwSearchOptions?: CrwSearchOptions;
+  parallelApiKey?: string;
+  parallelSearchUrl?: string;
+  parallelExtractUrl?: string;
+  parallelSearchOptions?: ParallelSearchOptions;
+  parallelSessionRef?: { current?: string };
 }
 
 export interface KeenableSearchOptions extends HttpAgentConfig {
@@ -329,6 +348,15 @@ export interface TavilyScraperConfig extends BaseSearchProviderConfig {
   includeImages?: boolean;
   includeFavicon?: boolean;
   format?: 'markdown' | 'text';
+}
+
+export interface ParallelScraperConfig extends BaseSearchProviderConfig {
+  objective?: string;
+  searchQueries?: string[];
+  maxCharsTotal?: number;
+  clientModel?: string;
+  sessionId?: string;
+  fullContent?: boolean;
 }
 
 export interface ScraperContentResult {
@@ -510,6 +538,7 @@ export interface SearchToolConfig
   tavilyScraperOptions?: TavilyScraperConfig;
   crwScraperOptions?: CrwScraperConfig;
   keenableScraperOptions?: KeenableScraperConfig;
+  parallelScraperOptions?: ParallelScraperConfig;
   /** Max chars of highlight content this tool feeds the MODEL per search (the
    * dominant, otherwise-unbounded part of the output). Distinct from
    * `maxContentLength`, which caps scraped/reranked content per source — full
@@ -561,7 +590,8 @@ export type AnyScraperResponse =
   | SerperScrapeResponse
   | TavilyScrapeResponse
   | CrwScrapeResponse
-  | KeenableScrapeResponse;
+  | KeenableScrapeResponse
+  | ParallelScrapeResponse;
 
 /** Base Scraper Interface */
 export interface BaseScraper {
@@ -613,6 +643,11 @@ export type SerperScrapeOptions = Omit<
 
 export type TavilyScrapeOptions = Omit<
   TavilyScraperConfig,
+  'apiKey' | 'apiUrl' | 'logger' | 'httpAgent' | 'httpsAgent'
+>;
+
+export type ParallelScrapeOptions = Omit<
+  ParallelScraperConfig,
   'apiKey' | 'apiUrl' | 'logger' | 'httpAgent' | 'httpsAgent'
 >;
 
@@ -758,6 +793,13 @@ export interface TavilySearchResult {
   published_date?: string;
 }
 
+export interface ParallelSearchResult {
+  url?: string;
+  title?: string;
+  publish_date?: string;
+  excerpts?: string[];
+}
+
 export type TavilyImageResult =
   | string
   | {
@@ -771,11 +813,48 @@ export interface TavilySearchResponse {
   results?: TavilySearchResult[];
 }
 
+export interface ParallelSearchResponse {
+  search_id: string;
+  results: ParallelSearchResult[];
+  session_id: string;
+  warnings?: Array<Record<string, unknown>> | null;
+  usage?: Array<Record<string, unknown>> | null;
+}
+
 export interface TavilyExtractResult {
   url: string;
   raw_content?: string;
   images?: string[];
   favicon?: string;
+  error?: string;
+}
+
+export interface ParallelExtractResult {
+  url: string;
+  title?: string;
+  excerpts?: string[];
+  full_content?: string;
+}
+
+export interface ParallelExtractError {
+  url: string;
+  error_type?: string;
+  http_status_code?: number;
+  content?: string;
+}
+
+export interface ParallelExtractResponse {
+  extract_id: string;
+  results: ParallelExtractResult[];
+  errors: ParallelExtractError[];
+  session_id: string;
+  warnings?: Array<Record<string, unknown>> | null;
+  usage?: Array<Record<string, unknown>> | null;
+}
+
+export interface ParallelScrapeResponse {
+  success: boolean;
+  data?: ParallelExtractResult;
   error?: string;
 }
 

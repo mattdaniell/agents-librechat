@@ -23,6 +23,8 @@ import { createTavilyScraper } from './tavily-scraper';
 import { createFirecrawlScraper } from './firecrawl';
 import { INTENT_PROPERTY } from '@/tools/intentArg';
 import { createCrwScraper } from './crw-scraper';
+import { createParallelScraper } from './parallel-scraper';
+import { type ParallelSessionRef } from './parallel-search';
 import { expandHighlights } from './highlights';
 import { createSearchMetrics } from './metrics';
 import { createDefaultLogger } from './utils';
@@ -497,6 +499,10 @@ export const createSearchTool = (
     keenableApiUrl,
     keenableSearchOptions,
     keenableScraperOptions,
+    parallelApiKey,
+    parallelSearchUrl,
+    parallelExtractUrl,
+    parallelSearchOptions,
     rerankerType = 'cohere',
     rerankerTimeout,
     topResults = 5,
@@ -520,6 +526,7 @@ export const createSearchTool = (
     crwApiUrl,
     crwSearchOptions,
     crwScraperOptions,
+    parallelScraperOptions,
     scraperTimeout,
     jinaApiKey,
     jinaApiUrl,
@@ -542,6 +549,7 @@ export const createSearchTool = (
       safeSearch: config.safeSearch !== 0,
     };
   }
+  const parallelSessionRef: ParallelSessionRef = {};
 
   const schemaProperties: Record<string, unknown> = {
     intent: { ...INTENT_PROPERTY },
@@ -579,6 +587,10 @@ export const createSearchTool = (
     crwSearchOptions,
     httpAgent,
     httpsAgent,
+    parallelApiKey,
+    parallelSearchUrl,
+    parallelSearchOptions,
+    parallelSessionRef,
   });
 
   /** Create scraper based on scraperProvider */
@@ -629,6 +641,22 @@ export const createSearchTool = (
       httpsAgent: httpsAgent ?? keenableScraperOptions?.httpsAgent,
       logger,
     });
+  } else if (scraperProvider === 'parallel') {
+    scraperInstance = createParallelScraper(
+      {
+        ...parallelScraperOptions,
+        apiKey:
+          parallelScraperOptions?.apiKey ??
+          parallelApiKey ??
+          process.env.PARALLEL_API_KEY,
+        apiUrl: parallelScraperOptions?.apiUrl ?? parallelExtractUrl,
+        timeout: scraperTimeout ?? parallelScraperOptions?.timeout,
+        httpAgent: httpAgent ?? parallelScraperOptions?.httpAgent,
+        httpsAgent: httpsAgent ?? parallelScraperOptions?.httpsAgent,
+        logger,
+      },
+      parallelSessionRef
+    );
   } else {
     scraperInstance = createFirecrawlScraper({
       ...firecrawlOptions,
@@ -684,14 +712,17 @@ export const createSearchTool = (
     searchAPI,
     provider: searchProvider,
     safeSearch,
-    // Keenable is organic-only: its API ignores `type`, so image/news
-    // sub-searches would spend rate limit and merge nothing.
-    supportsImages: searchProvider !== 'keenable',
+    // Keenable and Parallel are organic-only: their APIs ignore `type`, so
+    // image/news sub-searches would spend rate limit and merge nothing.
+    supportsImages:
+      searchProvider !== 'keenable' && searchProvider !== 'parallel',
     supportsVideos:
       searchProvider !== 'tavily' &&
       searchProvider !== 'keenable' &&
-      searchProvider !== 'crw',
-    supportsNews: searchProvider !== 'keenable',
+      searchProvider !== 'crw' &&
+      searchProvider !== 'parallel',
+    supportsNews:
+      searchProvider !== 'keenable' && searchProvider !== 'parallel',
     sourceProcessor,
     onGetHighlights,
     mainExpandBy,
