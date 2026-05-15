@@ -3,6 +3,7 @@ import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import type * as t from './types';
 import { getAttribution, createDefaultLogger } from './utils';
 import { createTavilyAPI } from './tavily-search';
+import { createParallelAPI, type ParallelSessionRef } from './parallel-search';
 import { BaseReranker } from './rerankers';
 
 const chunker = {
@@ -422,6 +423,10 @@ export const createSearchAPI = (
     tavilyApiKey,
     tavilySearchUrl,
     tavilySearchOptions,
+    parallelApiKey,
+    parallelSearchUrl,
+    parallelSearchOptions,
+    parallelSessionRef,
   } = config;
 
   if (searchProvider.toLowerCase() === 'serper') {
@@ -430,9 +435,16 @@ export const createSearchAPI = (
     return createSearXNGAPI(searxngInstanceUrl, searxngApiKey);
   } else if (searchProvider.toLowerCase() === 'tavily') {
     return createTavilyAPI(tavilyApiKey, tavilySearchUrl, tavilySearchOptions);
+  } else if (searchProvider.toLowerCase() === 'parallel') {
+    return createParallelAPI(
+      parallelApiKey,
+      parallelSearchUrl,
+      parallelSearchOptions,
+      parallelSessionRef as ParallelSessionRef | undefined
+    );
   } else {
     throw new Error(
-      `Invalid search provider: ${searchProvider}. Must be 'serper', 'searxng', or 'tavily'`
+      `Invalid search provider: ${searchProvider}. Must be 'serper', 'searxng', 'tavily', or 'parallel'`
     );
   }
 };
@@ -523,14 +535,18 @@ export const createSourceProcessor = (
       logger_.debug(`Scraping ${links.length} links`);
       try {
         let responses: Array<[string, t.AnyScraperResponse]>;
+        const scrapeOptions = {
+          objective: query,
+          searchQueries: [query],
+        };
 
         if (scraper.scrapeUrls) {
-          responses = await scraper.scrapeUrls(links);
+          responses = await scraper.scrapeUrls(links, scrapeOptions);
         } else {
           responses = await Promise.all(
             links.map((link) =>
               scraper
-                .scrapeUrl(link, {})
+                .scrapeUrl(link, scrapeOptions)
                 .catch((error): [string, t.AnyScraperResponse] => {
                   logger_.error(`Error scraping ${link}:`, error);
                   return [link, { success: false, error: String(error) }];
