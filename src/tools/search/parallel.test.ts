@@ -76,10 +76,10 @@ describe('Parallel search API', () => {
       objective: 'example query',
       search_queries: ['example query'],
       mode: 'basic',
-      max_results: 4,
       client_model: 'claude',
       advanced_settings: {
-        excerpts: {
+        max_results: 4,
+        excerpt_settings: {
           max_chars_per_result: 120,
         },
         source_policy: {

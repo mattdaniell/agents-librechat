@@ -62,12 +62,12 @@ export const createParallelAPI = (
       objective: query,
       search_queries: [query],
       mode: options.mode ?? 'advanced',
-      max_results: clampMaxResults(options.maxResults ?? numResults),
       max_chars_total: options.maxCharsTotal ?? DEFAULT_MAX_CHARS_TOTAL,
       client_model: options.clientModel,
       session_id: sessionId,
       advanced_settings: omitUndefined({
-        excerpts: omitUndefined({
+        max_results: clampMaxResults(options.maxResults ?? numResults),
+        excerpt_settings: omitUndefined({
           max_chars_per_result: options.maxCharsPerResult,
         }),
         source_policy: omitUndefined({
