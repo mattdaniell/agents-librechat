@@ -262,6 +262,15 @@ export function expandHighlights(
           result
         );
 
+        if (highlight.exact === true) {
+          highlights.push({
+            text: highlight.text,
+            score: highlight.score,
+            references,
+          });
+          continue;
+        }
+
         let startPos = content.indexOf(highlight.text);
         let highlightLen = highlight.text.length;
 

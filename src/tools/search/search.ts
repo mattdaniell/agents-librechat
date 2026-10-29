@@ -7,6 +7,7 @@ import {
   formatErrorForLog,
 } from './utils';
 import { createKeenableAPI } from './keenable-search';
+import { createParallelAPI } from './parallel-search';
 import { createTavilyAPI } from './tavily-search';
 import { createSearchMetrics } from './metrics';
 import { getDefaultRanking } from './rerankers';
@@ -559,6 +560,10 @@ export const createSearchAPI = (
     crwApiKey,
     crwApiUrl,
     crwSearchOptions,
+    parallelApiKey,
+    parallelSearchUrl,
+    parallelSearchOptions,
+    parallelSessionRef,
     httpAgent,
     httpsAgent,
   } = config;
@@ -591,9 +596,20 @@ export const createSearchAPI = (
       httpAgent: httpAgent ?? crwSearchOptions?.httpAgent,
       httpsAgent: httpsAgent ?? crwSearchOptions?.httpsAgent,
     });
+  } else if (searchProvider.toLowerCase() === 'parallel') {
+    return createParallelAPI(
+      parallelApiKey,
+      parallelSearchUrl,
+      {
+        ...parallelSearchOptions,
+        httpAgent: httpAgent ?? parallelSearchOptions?.httpAgent,
+        httpsAgent: httpsAgent ?? parallelSearchOptions?.httpsAgent,
+      },
+      parallelSessionRef
+    );
   } else {
     throw new Error(
-      `Invalid search provider: ${searchProvider}. Must be 'serper', 'searxng', 'tavily', 'keenable', or 'crw'`
+      `Invalid search provider: ${searchProvider}. Must be 'serper', 'searxng', 'tavily', 'keenable', 'crw', or 'parallel'`
     );
   }
 };
@@ -637,11 +653,19 @@ export const createSourceProcessor = (
 
     if (response.success && response.data) {
       const [content, references] = scraper.extractContent(response);
+      /** A configured reranker outranks a scraper's own passages in blind
+       * comparison, so the scraper's are used only when there is none. */
+      const highlights =
+        reranker == null
+          ? scraper.extractHighlights?.(response).slice(0, topResults)
+          : undefined;
       return {
         url,
         references,
         attribution,
         content: truncateContent(chunker.cleanText(content), maxContentLength),
+        highlights:
+          highlights != null && highlights.length > 0 ? highlights : undefined,
       };
     }
 
@@ -654,6 +678,16 @@ export const createSourceProcessor = (
     metrics: t.SearchMetrics,
     onGetHighlights: t.SearchToolConfig['onGetHighlights']
   ): Promise<t.ScrapeResult> => {
+    if (result.highlights != null && result.highlights.length > 0) {
+      metrics.recordRerank({
+        provider: 'scraper',
+        chunks: result.highlights.length,
+        results: result.highlights.length,
+        durationMs: 0,
+      });
+      onGetHighlights?.(result.url);
+      return result;
+    }
     const highlights = await getHighlights({
       query,
       reranker,
@@ -726,6 +760,8 @@ export const createSourceProcessor = (
       onGetHighlights: t.SearchToolConfig['onGetHighlights'];
     }): Promise<Array<t.ScrapeResult>> => {
       let responses: Array<[string, t.AnyScraperResponse]>;
+      /** Parallel Extract ranks excerpts against these; other scrapers ignore them. */
+      const scrapeOptions = { objective: query, searchQueries: [query] };
 
       /** Scoped to acquisition alone. A batch `scrapeUrls` that rejects
        * yields no per-link responses, so nothing downstream will ever report
@@ -734,12 +770,12 @@ export const createSourceProcessor = (
        * scraped anything. */
       try {
         if (scraper.scrapeUrls) {
-          responses = await scraper.scrapeUrls(links);
+          responses = await scraper.scrapeUrls(links, scrapeOptions);
         } else {
           responses = await Promise.all(
             links.map((link) =>
               scraper
-                .scrapeUrl(link, {})
+                .scrapeUrl(link, scrapeOptions)
                 .catch((error): [string, t.AnyScraperResponse] => [
                   link,
                   { success: false, error: String(error) },

@@ -13,10 +13,15 @@ import {
   DATE_RANGE,
 } from './schema';
 import {
+  createParallelScraper,
+  DEFAULT_PARALLEL_PASSAGE_CHARS,
+} from './parallel-scraper';
+import {
   formatResultsForLLM,
   MISSING_SEARCH_RESULT_DATA_ERROR,
 } from './format';
 import { createSearchAPI, createSourceProcessor } from './search';
+import { type ParallelSessionRef } from './parallel-search';
 import { createKeenableScraper } from './keenable-scraper';
 import { createSerperScraper } from './serper-scraper';
 import { createTavilyScraper } from './tavily-scraper';
@@ -497,6 +502,10 @@ export const createSearchTool = (
     keenableApiUrl,
     keenableSearchOptions,
     keenableScraperOptions,
+    parallelApiKey,
+    parallelSearchUrl,
+    parallelExtractUrl,
+    parallelSearchOptions,
     rerankerType = 'cohere',
     rerankerTimeout,
     topResults = 5,
@@ -520,6 +529,7 @@ export const createSearchTool = (
     crwApiUrl,
     crwSearchOptions,
     crwScraperOptions,
+    parallelScraperOptions,
     scraperTimeout,
     jinaApiKey,
     jinaApiUrl,
@@ -542,6 +552,7 @@ export const createSearchTool = (
       safeSearch: config.safeSearch !== 0,
     };
   }
+  const parallelSessionRef: ParallelSessionRef = {};
 
   const schemaProperties: Record<string, unknown> = {
     intent: { ...INTENT_PROPERTY },
@@ -579,8 +590,31 @@ export const createSearchTool = (
     crwSearchOptions,
     httpAgent,
     httpsAgent,
+    parallelApiKey,
+    parallelSearchUrl,
+    parallelSearchOptions,
+    parallelSessionRef,
   });
 
+  const selectedReranker =
+    config.reranker ??
+    createReranker({
+      rerankerType,
+      jinaApiKey,
+      jinaApiUrl,
+      cohereApiKey,
+      cohereApiUrl,
+      ragApiUrl,
+      ragApiTokenSupplier,
+      ragApiProfile,
+      rerankerTimeout,
+      httpAgent,
+      httpsAgent,
+      logger,
+    });
+
+  /** `none` is a deliberate opt-out that `createReranker` already reports;
+   * only an unusable configuration warrants a warning here. */
   /** Create scraper based on scraperProvider */
   let scraperInstance: t.BaseScraper;
 
@@ -629,6 +663,28 @@ export const createSearchTool = (
       httpsAgent: httpsAgent ?? keenableScraperOptions?.httpsAgent,
       logger,
     });
+  } else if (scraperProvider === 'parallel') {
+    scraperInstance = createParallelScraper(
+      {
+        ...parallelScraperOptions,
+        apiKey:
+          parallelScraperOptions?.apiKey ??
+          parallelApiKey ??
+          process.env.PARALLEL_API_KEY,
+        apiUrl: parallelScraperOptions?.apiUrl ?? parallelExtractUrl,
+        /** Without a reranker, Parallel's own ranked passages are the
+         * highlights, so Parallel is asked to size them; with one, the
+         * reranker picks from the full extracted text. */
+        maxCharsPerResult:
+          parallelScraperOptions?.maxCharsPerResult ??
+          (selectedReranker ? undefined : DEFAULT_PARALLEL_PASSAGE_CHARS),
+        timeout: scraperTimeout ?? parallelScraperOptions?.timeout,
+        httpAgent: httpAgent ?? parallelScraperOptions?.httpAgent,
+        httpsAgent: httpsAgent ?? parallelScraperOptions?.httpsAgent,
+        logger,
+      },
+      parallelSessionRef
+    );
   } else {
     scraperInstance = createFirecrawlScraper({
       ...firecrawlOptions,
@@ -643,25 +699,6 @@ export const createSearchTool = (
     });
   }
 
-  const selectedReranker =
-    config.reranker ??
-    createReranker({
-      rerankerType,
-      jinaApiKey,
-      jinaApiUrl,
-      cohereApiKey,
-      cohereApiUrl,
-      ragApiUrl,
-      ragApiTokenSupplier,
-      ragApiProfile,
-      rerankerTimeout,
-      httpAgent,
-      httpsAgent,
-      logger,
-    });
-
-  /** `none` is a deliberate opt-out that `createReranker` already reports;
-   * only an unusable configuration warrants a warning here. */
   if (!selectedReranker && rerankerType !== 'none') {
     logger.warn('No reranker selected. Using default ranking.');
   }
@@ -684,14 +721,17 @@ export const createSearchTool = (
     searchAPI,
     provider: searchProvider,
     safeSearch,
-    // Keenable is organic-only: its API ignores `type`, so image/news
-    // sub-searches would spend rate limit and merge nothing.
+    // Keenable is organic-only and Parallel adds only image search: the rest
+    // ignore `type`, so those sub-searches would spend rate limit and merge
+    // nothing.
     supportsImages: searchProvider !== 'keenable',
     supportsVideos:
       searchProvider !== 'tavily' &&
       searchProvider !== 'keenable' &&
-      searchProvider !== 'crw',
-    supportsNews: searchProvider !== 'keenable',
+      searchProvider !== 'crw' &&
+      searchProvider !== 'parallel',
+    supportsNews:
+      searchProvider !== 'keenable' && searchProvider !== 'parallel',
     sourceProcessor,
     onGetHighlights,
     mainExpandBy,
